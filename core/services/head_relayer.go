@@ -1,0 +1,148 @@
+package services
+
+import (
+	"context"
+	"crypto/rand"
+	"fmt"
+	"reflect"
+	"sync"
+	"time"
+
+	"github.com/pkg/errors"
+	"github.com/smartcontractkit/chainlink/core/logger"
+	"github.com/smartcontractkit/chainlink/core/store"
+	"github.com/smartcontractkit/chainlink/core/store/models"
+	"github.com/smartcontractkit/chainlink/core/utils"
+	"go.uber.org/atomic"
+)
+
+<<<<<<< Updated upstream
+func NewHeadRelayer() HeadRelayer {
+	return HeadRelayer{
+		callbacks: make(map[store.HeadTrackable]bool),
+=======
+type HeadRelayable interface {
+	OnNewLongestChain(ctx context.Context, head models.Head)
+}
+
+type callbackID [256]byte
+
+func NewHeadRelayer() HeadRelayer {
+	return HeadRelayer{
+		callbacks: make(map[callbackID]HeadRelayable),
+>>>>>>> Stashed changes
+		isRunning: atomic.NewBool(false),
+		mailbox:   utils.NewMailbox(1),
+		mutex:     &sync.RWMutex{},
+		chClose:   make(chan struct{}),
+	}
+}
+
+type HeadRelayer struct {
+<<<<<<< Updated upstream
+	callbacks map[store.HeadTrackable]bool
+=======
+	callbacks map[callbackID]HeadRelayable
+>>>>>>> Stashed changes
+	isRunning *atomic.Bool
+	mailbox   *utils.Mailbox
+	mutex     *sync.RWMutex
+	chClose   chan struct{}
+}
+
+var _ store.HeadTrackable = HeadRelayer{}
+
+func (hr HeadRelayer) Start() error {
+	if hr.isRunning.Load() {
+		return errors.New("already started")
+	}
+	hr.isRunning.Store(true)
+	go hr.run()
+	return nil
+}
+
+func (hr HeadRelayer) Close() error {
+	close(hr.chClose)
+	return nil
+}
+
+func (hr HeadRelayer) Connect(head *models.Head) error {
+	return nil
+}
+
+func (hr HeadRelayer) Disconnect() {}
+
+func (hr HeadRelayer) OnNewLongestChain(ctx context.Context, head models.Head) {
+	hr.mailbox.Deliver(head)
+}
+
+func (hr HeadRelayer) Subscribe(callback store.HeadTrackable) (unsubscribe func()) {
+	hr.mutex.Lock()
+	defer hr.mutex.Unlock()
+	id, err := newID()
+	if err != nil {
+		logger.Errorf("Unable to create ID for head relayble callback: %v", err)
+		return
+	}
+	hr.callbacks[id] = callback
+	return func() {
+		hr.mutex.Lock()
+		defer hr.mutex.Unlock()
+		delete(hr.callbacks, id)
+	}
+}
+
+func (hr HeadRelayer) run() {
+	for {
+		select {
+		case <-hr.chClose:
+			return
+		case <-hr.mailbox.Notify():
+			hr.runCallbacks()
+		}
+	}
+}
+
+// DEV: the head relayer makes no promises about head delivery! Subscribing
+// Jobs should expect to the relayer to skip heads if there are a large number of listeners.
+// and all callbacks cannot be completed in the allotted time.
+func (hr HeadRelayer) runCallbacks() {
+	hr.mutex.RLock()
+	defer hr.mutex.RUnlock()
+
+	head, ok := hr.mailbox.Retrieve().(models.Head)
+	if !ok {
+		logger.Errorf("expected `models.Head`, got %T", head)
+		return
+	}
+
+	wg := sync.WaitGroup{}
+	wg.Add(len(hr.callbacks))
+
+<<<<<<< Updated upstream
+	for trackable := range hr.callbacks {
+		go func(t store.HeadTrackable) {
+=======
+	for _, trackable := range hr.callbacks {
+		go func(t HeadRelayable) {
+>>>>>>> Stashed changes
+			start := time.Now()
+			t.OnNewLongestChain(context.Background(), head) // TODO - RYAN
+			elapsed := time.Since(start)
+			logger.Debugw(fmt.Sprintf("HeadRelayer: finished callback in %s", elapsed), "callbackType", reflect.TypeOf(t), "blockNumber", head.Number, "time", elapsed, "id", "head_relayer")
+			wg.Done()
+		}(trackable)
+	}
+
+	wg.Wait()
+}
+
+func newID() (id callbackID, _ error) {
+	randBytes := make([]byte, 256)
+	_, err := rand.Read(randBytes)
+	if err != nil {
+		return id, err
+	}
+	copy(id[:], randBytes)
+	return id, nil
+}
