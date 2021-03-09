@@ -27,8 +27,9 @@ func setup(t *testing.T) (
 ) {
 	store, strCleanup := cltest.NewStore(t)
 	ethMock := new(mocks.Client)
-	executor := keeper.NewUpkeepExecutor(store.DB, ethMock)
-	registry := cltest.MustInsertKeeperRegistry(t, store)
+	registry, job := cltest.MustInsertKeeperRegistry(t, store)
+	executor := keeper.NewUpkeepExecutor(job, store.DB, ethMock)
+	cltest.MustInsertUpkeepForRegistry(t, store, registry)
 	err := executor.Start()
 	require.NoError(t, err)
 	cleanup := func() { executor.Close(); strCleanup() }
@@ -63,10 +64,6 @@ func Test_UpkeepExecutor_PerformsUpkeep_Happy(t *testing.T) {
 	store, ethMock, executor, registry, cleanup := setup(t)
 	defer cleanup()
 
-	upkeep := newUpkeep(registry, 0)
-	err := store.DB.Create(&upkeep).Error
-	require.NoError(t, err)
-
 	registryMock := cltest.NewContractMockReceiver(t, ethMock, keeper.RegistryABI, registry.ContractAddress.Address())
 	registryMock.MockResponse("checkUpkeep", checkUpkeepResponse)
 
@@ -88,12 +85,9 @@ func Test_UpkeepExecutor_PerformsUpkeep_Happy(t *testing.T) {
 func Test_UpkeepExecutor_PerformsUpkeep_Error(t *testing.T) {
 	t.Parallel()
 	g := gomega.NewGomegaWithT(t)
-	store, ethMock, executor, registry, cleanup := setup(t)
-	defer cleanup()
 
-	upkeep := newUpkeep(registry, 0)
-	err := store.DB.Create(&upkeep).Error
-	require.NoError(t, err)
+	_, ethMock, executor, _, cleanup := setup(t)
+	defer cleanup()
 
 	wasCalled := atomic.NewBool(false)
 	ethMock.

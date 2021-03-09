@@ -9,6 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/smartcontractkit/chainlink/core/logger"
 	"github.com/smartcontractkit/chainlink/core/services/eth"
+	"github.com/smartcontractkit/chainlink/core/services/job"
 	"github.com/smartcontractkit/chainlink/core/services/postgres"
 	"github.com/smartcontractkit/chainlink/core/store"
 	"github.com/smartcontractkit/chainlink/core/store/models"
@@ -24,6 +25,7 @@ const (
 )
 
 func NewUpkeepExecutor(
+	job job.Job,
 	db *gorm.DB,
 	ethClient eth.Client,
 ) *UpkeepExecutor {
@@ -32,15 +34,17 @@ func NewUpkeepExecutor(
 		wgDone:         sync.WaitGroup{},
 		ethClient:      ethClient,
 		orm:            NewORM(db),
+		job:            job,
 		executionQueue: make(chan struct{}, executionQueueSize),
+		mailbox:        utils.NewMailbox(1),
 		chStop:         make(chan struct{}),
-		chSignalRun:    make(chan struct{}, 1),
 		StartStopOnce:  utils.StartStopOnce{},
 	}
 }
 
 // UpkeepExecutor fulfills HeadTrackable interface
 var _ store.HeadTrackable = (*UpkeepExecutor)(nil)
+var _ job.Service = (*UpkeepExecutor)(nil)
 
 type UpkeepExecutor struct {
 	blockHeight *atomic.Int64
@@ -50,7 +54,8 @@ type UpkeepExecutor struct {
 
 	executionQueue chan struct{}
 	chStop         chan struct{}
-	chSignalRun    chan struct{}
+	job            job.Job
+	mailbox        *utils.Mailbox
 
 	utils.StartStopOnce
 }
@@ -78,12 +83,8 @@ func (executor *UpkeepExecutor) Connect(head *models.Head) error {
 func (executor *UpkeepExecutor) Disconnect() {}
 
 func (executor *UpkeepExecutor) OnNewLongestChain(ctx context.Context, head models.Head) {
-	executor.blockHeight.Store(head.Number)
-	// avoid blocking if signal already in buffer
-	select {
-	case executor.chSignalRun <- struct{}{}:
-	default:
-	}
+	executor.blockHeight.Store(head.Number) // TODO - RYAN - this shouldn't change in the middle of a run
+	executor.mailbox.Deliver(head)
 }
 
 func (executor *UpkeepExecutor) run() {
@@ -93,7 +94,7 @@ func (executor *UpkeepExecutor) run() {
 		select {
 		case <-executor.chStop:
 			return
-		case <-executor.chSignalRun:
+		case <-executor.mailbox.Notify():
 			executor.processActiveUpkeeps()
 		}
 	}

@@ -16,21 +16,15 @@ import (
 	"go.uber.org/atomic"
 )
 
-<<<<<<< Updated upstream
-func NewHeadRelayer() HeadRelayer {
-	return HeadRelayer{
-		callbacks: make(map[store.HeadTrackable]bool),
-=======
+type callbackID [256]byte
+
 type HeadRelayable interface {
 	OnNewLongestChain(ctx context.Context, head models.Head)
 }
 
-type callbackID [256]byte
-
 func NewHeadRelayer() HeadRelayer {
 	return HeadRelayer{
 		callbacks: make(map[callbackID]HeadRelayable),
->>>>>>> Stashed changes
 		isRunning: atomic.NewBool(false),
 		mailbox:   utils.NewMailbox(1),
 		mutex:     &sync.RWMutex{},
@@ -39,11 +33,7 @@ func NewHeadRelayer() HeadRelayer {
 }
 
 type HeadRelayer struct {
-<<<<<<< Updated upstream
-	callbacks map[store.HeadTrackable]bool
-=======
 	callbacks map[callbackID]HeadRelayable
->>>>>>> Stashed changes
 	isRunning *atomic.Bool
 	mailbox   *utils.Mailbox
 	mutex     *sync.RWMutex
@@ -76,7 +66,7 @@ func (hr HeadRelayer) OnNewLongestChain(ctx context.Context, head models.Head) {
 	hr.mailbox.Deliver(head)
 }
 
-func (hr HeadRelayer) Subscribe(callback store.HeadTrackable) (unsubscribe func()) {
+func (hr HeadRelayer) Subscribe(callback HeadRelayable) (unsubscribe func()) {
 	hr.mutex.Lock()
 	defer hr.mutex.Unlock()
 	id, err := newID()
@@ -119,19 +109,14 @@ func (hr HeadRelayer) runCallbacks() {
 	wg := sync.WaitGroup{}
 	wg.Add(len(hr.callbacks))
 
-<<<<<<< Updated upstream
-	for trackable := range hr.callbacks {
-		go func(t store.HeadTrackable) {
-=======
-	for _, trackable := range hr.callbacks {
+	for _, relayable := range hr.callbacks {
 		go func(t HeadRelayable) {
->>>>>>> Stashed changes
 			start := time.Now()
 			t.OnNewLongestChain(context.Background(), head) // TODO - RYAN
 			elapsed := time.Since(start)
 			logger.Debugw(fmt.Sprintf("HeadRelayer: finished callback in %s", elapsed), "callbackType", reflect.TypeOf(t), "blockNumber", head.Number, "time", elapsed, "id", "head_relayer")
 			wg.Done()
-		}(trackable)
+		}(relayable)
 	}
 
 	wg.Wait()
