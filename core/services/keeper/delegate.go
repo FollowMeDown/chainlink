@@ -47,7 +47,7 @@ func (d *Delegate) ServicesForSpec(spec job.Job) (services []job.Service, err er
 	}
 
 	registrySynchronizer := NewRegistrySynchronizer(spec, contract, d.db, d.syncInterval)
-	upkeepExecutor := NewUpkeepExecutor(spec, d.db, d.ethClient)
+	upkeepExecutor := NewUpkeepExecutor(spec, d.db, d.ethClient, d.headRelayer)
 
 	return []job.Service{
 		registrySynchronizer,

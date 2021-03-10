@@ -16,6 +16,8 @@ import (
 	"go.uber.org/atomic"
 )
 
+const callbackTimeoutPeriod = 2 * time.Second
+
 type callbackID [256]byte
 
 type HeadRelayable interface {
@@ -32,6 +34,8 @@ func NewHeadRelayer() HeadRelayer {
 	}
 }
 
+// HeadRelayer relays heads from the head tracker to subscribed jobs, it is less robust against
+// congestgion than the head tracker, and missed heads should be expected by consuming jobs
 type HeadRelayer struct {
 	callbacks map[callbackID]HeadRelayable
 	isRunning *atomic.Bool
@@ -112,7 +116,9 @@ func (hr HeadRelayer) runCallbacks() {
 	for _, relayable := range hr.callbacks {
 		go func(t HeadRelayable) {
 			start := time.Now()
-			t.OnNewLongestChain(context.Background(), head) // TODO - RYAN
+			ctx, cancel := context.WithTimeout(context.Background(), callbackTimeoutPeriod)
+			defer cancel()
+			t.OnNewLongestChain(ctx, head)
 			elapsed := time.Since(start)
 			logger.Debugw(fmt.Sprintf("HeadRelayer: finished callback in %s", elapsed), "callbackType", reflect.TypeOf(t), "blockNumber", head.Number, "time", elapsed, "id", "head_relayer")
 			wg.Done()

@@ -10,6 +10,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/smartcontractkit/chainlink/core/internal/cltest"
 	"github.com/smartcontractkit/chainlink/core/internal/mocks"
+	"github.com/smartcontractkit/chainlink/core/services"
 	"github.com/smartcontractkit/chainlink/core/services/keeper"
 	"github.com/smartcontractkit/chainlink/core/store"
 	"github.com/smartcontractkit/chainlink/core/store/models"
@@ -28,7 +29,8 @@ func setup(t *testing.T) (
 	store, strCleanup := cltest.NewStore(t)
 	ethMock := new(mocks.Client)
 	registry, job := cltest.MustInsertKeeperRegistry(t, store)
-	executor := keeper.NewUpkeepExecutor(job, store.DB, ethMock)
+	headRelayer := services.NewHeadRelayer()
+	executor := keeper.NewUpkeepExecutor(job, store.DB, ethMock, headRelayer)
 	cltest.MustInsertUpkeepForRegistry(t, store, registry)
 	err := executor.Start()
 	require.NoError(t, err)
