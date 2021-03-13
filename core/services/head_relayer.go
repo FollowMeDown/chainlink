@@ -13,24 +13,26 @@ import (
 	"github.com/smartcontractkit/chainlink/core/store"
 	"github.com/smartcontractkit/chainlink/core/store/models"
 	"github.com/smartcontractkit/chainlink/core/utils"
-	"go.uber.org/atomic"
 )
 
-const callbackTimeoutPeriod = 2 * time.Second
+const callbackTimeout = 2 * time.Second
 
 type callbackID [256]byte
 
+// HeadRelayable defines the interface for listeners
 type HeadRelayable interface {
 	OnNewLongestChain(ctx context.Context, head models.Head)
 }
 
-func NewHeadRelayer() HeadRelayer {
-	return HeadRelayer{
-		callbacks: make(map[callbackID]HeadRelayable),
-		isRunning: atomic.NewBool(false),
-		mailbox:   utils.NewMailbox(1),
-		mutex:     &sync.RWMutex{},
-		chClose:   make(chan struct{}),
+// NewHeadRelayer creates a new HeadRelayer
+func NewHeadRelayer() *HeadRelayer {
+	return &HeadRelayer{
+		callbacks:     make(map[callbackID]HeadRelayable),
+		mailbox:       utils.NewMailbox(1),
+		mutex:         &sync.RWMutex{},
+		chClose:       make(chan struct{}),
+		wgDone:        sync.WaitGroup{},
+		StartStopOnce: utils.StartStopOnce{},
 	}
 }
 
@@ -38,39 +40,42 @@ func NewHeadRelayer() HeadRelayer {
 // congestgion than the head tracker, and missed heads should be expected by consuming jobs
 type HeadRelayer struct {
 	callbacks map[callbackID]HeadRelayable
-	isRunning *atomic.Bool
 	mailbox   *utils.Mailbox
 	mutex     *sync.RWMutex
 	chClose   chan struct{}
+	wgDone    sync.WaitGroup
+	utils.StartStopOnce
 }
 
-var _ store.HeadTrackable = HeadRelayer{}
+var _ store.HeadTrackable = (*HeadRelayer)(nil)
 
-func (hr HeadRelayer) Start() error {
-	if hr.isRunning.Load() {
-		return errors.New("already started")
+func (hr *HeadRelayer) Start() error {
+	return hr.StartOnce("HeadRelayer", func() error {
+		go hr.run()
+		return nil
+	})
+}
+
+func (hr *HeadRelayer) Close() error {
+	if !hr.OkayToStop() {
+		return errors.New("HeadRelayer is already stopped")
 	}
-	hr.isRunning.Store(true)
-	go hr.run()
-	return nil
-}
-
-func (hr HeadRelayer) Close() error {
 	close(hr.chClose)
+	hr.wgDone.Wait()
 	return nil
 }
 
-func (hr HeadRelayer) Connect(head *models.Head) error {
+func (hr *HeadRelayer) Connect(head *models.Head) error {
 	return nil
 }
 
-func (hr HeadRelayer) Disconnect() {}
+func (hr *HeadRelayer) Disconnect() {}
 
-func (hr HeadRelayer) OnNewLongestChain(ctx context.Context, head models.Head) {
+func (hr *HeadRelayer) OnNewLongestChain(ctx context.Context, head models.Head) {
 	hr.mailbox.Deliver(head)
 }
 
-func (hr HeadRelayer) Subscribe(callback HeadRelayable) (unsubscribe func()) {
+func (hr *HeadRelayer) Subscribe(callback HeadRelayable) (unsubscribe func()) {
 	hr.mutex.Lock()
 	defer hr.mutex.Unlock()
 	id, err := newID()
@@ -86,21 +91,23 @@ func (hr HeadRelayer) Subscribe(callback HeadRelayable) (unsubscribe func()) {
 	}
 }
 
-func (hr HeadRelayer) run() {
+func (hr *HeadRelayer) run() {
+	hr.wgDone.Add(1)
+	defer hr.wgDone.Done()
 	for {
 		select {
 		case <-hr.chClose:
 			return
 		case <-hr.mailbox.Notify():
-			hr.runCallbacks()
+			hr.executeCallbacks()
 		}
 	}
 }
 
 // DEV: the head relayer makes no promises about head delivery! Subscribing
-// Jobs should expect to the relayer to skip heads if there are a large number of listeners.
+// Jobs should expect to the relayer to skip heads if there is a large number of listeners
 // and all callbacks cannot be completed in the allotted time.
-func (hr HeadRelayer) runCallbacks() {
+func (hr *HeadRelayer) executeCallbacks() {
 	hr.mutex.RLock()
 	defer hr.mutex.RUnlock()
 
@@ -116,7 +123,7 @@ func (hr HeadRelayer) runCallbacks() {
 	for _, relayable := range hr.callbacks {
 		go func(t HeadRelayable) {
 			start := time.Now()
-			ctx, cancel := context.WithTimeout(context.Background(), callbackTimeoutPeriod)
+			ctx, cancel := context.WithTimeout(context.Background(), callbackTimeout)
 			defer cancel()
 			t.OnNewLongestChain(ctx, head)
 			elapsed := time.Since(start)

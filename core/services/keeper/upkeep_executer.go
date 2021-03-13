@@ -14,7 +14,6 @@ import (
 	"github.com/smartcontractkit/chainlink/core/services/postgres"
 	"github.com/smartcontractkit/chainlink/core/store/models"
 	"github.com/smartcontractkit/chainlink/core/utils"
-	"go.uber.org/atomic"
 	"gorm.io/gorm"
 )
 
@@ -28,10 +27,9 @@ func NewUpkeepExecutor(
 	job job.Job,
 	db *gorm.DB,
 	ethClient eth.Client,
-	headRelayer services.HeadRelayer,
+	headRelayer *services.HeadRelayer,
 ) *UpkeepExecutor {
 	return &UpkeepExecutor{
-		blockHeight:    atomic.NewInt64(0),
 		chStop:         make(chan struct{}),
 		ethClient:      ethClient,
 		executionQueue: make(chan struct{}, executionQueueSize),
@@ -44,15 +42,15 @@ func NewUpkeepExecutor(
 	}
 }
 
-// UpkeepExecutor fulfills HeadTrackable interface
+// UpkeepExecutor fulfills Service and HeadRelayable interfaces
 var _ job.Service = (*UpkeepExecutor)(nil)
+var _ services.HeadRelayable = (*UpkeepExecutor)(nil)
 
 type UpkeepExecutor struct {
-	blockHeight    *atomic.Int64
 	chStop         chan struct{}
 	ethClient      eth.Client
 	executionQueue chan struct{}
-	headRelayer    services.HeadRelayer
+	headRelayer    *services.HeadRelayer
 	job            job.Job
 	mailbox        *utils.Mailbox
 	orm            ORM
@@ -64,11 +62,11 @@ func (executor *UpkeepExecutor) Start() error {
 	return executor.StartOnce("UpkeepExecutor", func() error {
 		go executor.run()
 		unsubscribe := executor.headRelayer.Subscribe(executor)
+		executor.wgDone.Add(1)
 		go func() {
-			executor.wgDone.Add(1)
+			defer unsubscribe()
+			defer executor.wgDone.Done()
 			<-executor.chStop
-			unsubscribe()
-			executor.wgDone.Done()
 		}()
 		return nil
 	})
@@ -80,10 +78,6 @@ func (executor *UpkeepExecutor) Close() error {
 	}
 	close(executor.chStop)
 	executor.wgDone.Wait()
-	return nil
-}
-
-func (executor *UpkeepExecutor) Connect(head *models.Head) error {
 	return nil
 }
 

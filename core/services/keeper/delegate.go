@@ -14,12 +14,12 @@ import (
 
 type Delegate struct {
 	ethClient    eth.Client
-	headRelayer  services.HeadRelayer
+	headRelayer  *services.HeadRelayer
 	db           *gorm.DB
 	syncInterval time.Duration
 }
 
-func NewDelegate(db *gorm.DB, ethClient eth.Client, headRelayer services.HeadRelayer, config *orm.Config) *Delegate {
+func NewDelegate(db *gorm.DB, ethClient eth.Client, headRelayer *services.HeadRelayer, config *orm.Config) *Delegate {
 	return &Delegate{
 		ethClient:    ethClient,
 		headRelayer:  headRelayer,

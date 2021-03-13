@@ -96,7 +96,7 @@ type Application interface {
 type ChainlinkApplication struct {
 	Exiter      func(int)
 	HeadTracker *services.HeadTracker
-	HeadRelayer services.HeadRelayer
+	HeadRelayer *services.HeadRelayer
 	StatsPusher synchronization.StatsPusher
 	services.RunManager
 	RunQueue                 services.RunQueue
